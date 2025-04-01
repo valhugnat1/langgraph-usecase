@@ -8,6 +8,7 @@ from my_agent.utils.state import State
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
+from langchain_mistralai.chat_models import ChatMistralAI
 import os
 from my_agent.utils.tools import tools
 
@@ -20,10 +21,15 @@ llm = ChatOpenAI(
     model="llama-3.1-70b-instruct",
 )
 
-llm = ChatAnthropic(
-    api_key=os.getenv("ANTHROPIC_API_KEY"),
-    model="claude-3-5-sonnet-20241022"
-)
+# llm = ChatAnthropic(
+#     api_key=os.getenv("ANTHROPIC_API_KEY"),
+#     model="claude-3-5-sonnet-20241022"
+# )
+
+# llm = ChatMistralAI(
+#     api_key=os.getenv("MISTRAL_API_KEY"),
+#     model="mistral-large-latest"
+# )
 
 llm_agent_no_tool = create_react_agent(llm, tools=[])
 llm_agent_tools = create_react_agent(llm, tools=tools)
