@@ -1,6 +1,7 @@
 import json
 from langchain_core.messages import ToolMessage
 from langchain_community.tools.tavily_search import TavilySearchResults
+from my_agent.utils.calendar_tools import  get_calendar_tool, create_calendar_tool
 
 tool = TavilySearchResults(max_results=2)
 
@@ -29,4 +30,4 @@ class BasicToolNode:
             )
         return {"messages": outputs}
 
-tools = [tool]
+tools = [tool, get_calendar_tool, create_calendar_tool]
