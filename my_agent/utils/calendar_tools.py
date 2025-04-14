@@ -126,64 +126,137 @@ class GetCalendarEventsTool(BaseTool, BaseGoogleCalendar):
                 'error_type': type(e).__name__
             }
         
+
 class CreateCalendarEventInput(BaseModel):
-    summary: str = Field(..., description="Title of the event")
-    description: str = Field(default="", description="Description of the event")
-    start_time: str = Field(..., description="Start time of the event in ISO format")
-    end_time: str = Field(..., description="End time of the event in ISO format")
-    location: str = Field(default="", description="Location of the event")
-    attendees: List[str] = Field(default=[], description="List of attendee email addresses")
+    summary: str = Field(
+        ..., # The '...' ellipsis correctly marks this as REQUIRED
+        description="The title or summary of the calendar event. This is a required field."
+    )
+    start_time: str = Field(
+        ..., # REQUIRED
+        description="The start date and time of the event in ISO 8601 format (e.g., '2025-04-15T10:00:00Z' or '2025-04-15T10:00:00+02:00'). Include the timezone offset or 'Z' for UTC. This is a required field."
+    )
+    end_time: str = Field(
+        ..., # REQUIRED
+        description="The end date and time of the event in ISO 8601 format (e.g., '2025-04-15T11:00:00Z' or '2025-04-15T11:00:00+02:00'). Include the timezone offset or 'Z' for UTC. This is a required field."
+    )
+    description: str = Field(
+        default="",
+        description="An optional detailed description for the event."
+    )
+    location: str = Field(
+        default="",
+        description="An optional location for the event (e.g., 'Conference Room 1' or 'Online')."
+    )
+    attendees: List[str] = Field(
+        default=[],
+        description="An optional list of email addresses for attendees to invite."
+    )
 
 class CreateCalendarEventTool(BaseTool, BaseGoogleCalendar):
     name: str = "create_calendar_event"
-    description: str = "Useful for creating new events in your Google Calendar"
+    description: str = (
+        "Use this tool to create a new event in the user's Google Calendar. "
+        "You MUST provide 'summary', 'start_time', and 'end_time'. "
+        "'start_time' and 'end_time' must be in ISO 8601 format (e.g., '2025-04-15T10:00:00Z'). "
+        "Ask the user for any missing required information. "
+        "IMPORTANT: Format the arguments as a VALID JSON object like this: "
+        '{"summary": "Meeting with Team", "start_time": "2025-04-15T09:00:00+02:00", "end_time": "2025-04-15T10:00:00+02:00", "description": "Discuss project", "location": "Room 3", "attendees": ["email@example.com"]}'
+    )
     args_schema: type[BaseModel] = CreateCalendarEventInput
 
-    def _run(self, summary: str, description: str = "", start_time: str = "", 
-             end_time: str = "", location: str = "", attendees: List[str] = None) -> Dict[str, Any]:
-        """Create a new calendar event."""
+    # Adjusted signature: no defaults for required fields defined in args_schema
+    def _run(self,
+             summary: str,
+             start_time: str,
+             end_time: str,
+             description: str = "",
+             location: str = "",
+             attendees: Optional[List[str]] = None # Use Optional for clarity
+            ) -> Dict[str, Any]:
+        """Create a new calendar event based on provided details."""
         try:
-            event = {
+            # Ensure service is ready (good practice, already in your code)
+            if not self.service:
+                 self._authenticate() # Or raise an error if authentication isn't expected here
+
+            # Prepare the event body for the Google API
+            # The schema ensures summary, start_time, end_time are present
+            event_body = {
                 'summary': summary,
-                'description': description,
+                'description': description or "", # Handle potential empty string if default used
                 'start': {
                     'dateTime': start_time,
-                    'timeZone': 'UTC',
+                    # Consider extracting timezone from input or using a default/user setting
+                    # For simplicity here, assuming input includes offset or is UTC ('Z')
+                    # 'timeZone': 'UTC', # You might need logic to determine the correct timezone
                 },
                 'end': {
                     'dateTime': end_time,
-                    'timeZone': 'UTC',
+                    # 'timeZone': 'UTC',
                 },
-                'location': location,
+                'location': location or "",
             }
 
+            # Use the provided attendees list if it's not None or empty
             if attendees:
-                event['attendees'] = [{'email': email} for email in attendees]
+                event_body['attendees'] = [{'email': email} for email in attendees]
 
-            event = self.service.events().insert(
+            # --- Add simple validation for time format as a fallback ---
+            # (Although ideally, the LLM provides it correctly based on description)
+            try:
+                # Basic check - doesn't fully validate ISO 8601 but catches obvious errors
+                datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                datetime.datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            except ValueError as time_err:
+                 return {
+                    'status': 'error',
+                    'message': f"Invalid time format provided. Expected ISO 8601 format (e.g., 'YYYY-MM-DDTHH:MM:SSZ'). Error: {time_err}",
+                    'error_type': 'ValueError'
+                 }
+            # --- End validation ---
+
+
+            created_event = self.service.events().insert(
                 calendarId='primary',
-                body=event,
-                sendUpdates='all'
+                body=event_body,
+                sendUpdates='all' # Notify attendees
             ).execute()
+            print(f"--- Event created successfully: {created_event.get('id')} ---") # Debugging print
 
+
+            # Format the successful response
             return {
                 'status': 'success',
                 'message': 'Event created successfully',
                 'event': {
-                    'id': event['id'],
-                    'summary': event['summary'],
-                    'start': event['start'],
-                    'end': event['end'],
-                    'location': event.get('location', ''),
-                    'description': event.get('description', ''),
-                    'attendees': [attendee.get('email') for attendee in event.get('attendees', [])]
+                    'id': created_event.get('id'),
+                    'summary': created_event.get('summary'),
+                    'start': created_event.get('start', {}).get('dateTime'),
+                    'end': created_event.get('end', {}).get('dateTime'),
+                    'location': created_event.get('location', ''),
+                    'description': created_event.get('description', ''),
+                    'attendees': [attendee.get('email') for attendee in created_event.get('attendees', [])],
+                    'htmlLink': created_event.get('htmlLink') # Link to view event
                 }
             }
 
         except Exception as e:
+            # Catch API errors or other issues
+            error_message = str(e)
+            print(f"--- Error creating event: {error_message} ---") # Debugging print
+
+            # Check for specific Google API error details if possible
+            if hasattr(e, 'content'):
+                try:
+                    error_details = json.loads(e.content.decode('utf-8'))
+                    error_message = error_details.get('error', {}).get('message', error_message)
+                except:
+                    pass # Keep original error message if parsing fails
+
             return {
                 'status': 'error',
-                'message': str(e),
+                'message': f"Failed to create event: {error_message}",
                 'error_type': type(e).__name__
             }
 
