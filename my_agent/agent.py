@@ -8,8 +8,6 @@ builder.add_edge(START, "supervisor")
 builder.add_node("supervisor", supervisor_node)
 builder.add_node("general ai", worker_general)
 builder.add_node("code ai", worker_code)
-builder.add_node("HR ai", worker_HR)
-builder.add_node("product ai", worker_product)
 
 graph = builder.compile()
 graph.name = "Agent"

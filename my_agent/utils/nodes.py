@@ -7,8 +7,8 @@ from my_agent.utils.prompts import CHAT_OPTIONS, SYSTEM_PROMPT
 from my_agent.utils.state import State
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
-from langchain_mistralai.chat_models import ChatMistralAI
+# from langchain_anthropic import ChatAnthropic
+# from langchain_mistralai.chat_models import ChatMistralAI
 import os
 from my_agent.utils.tools import tools
 
@@ -17,11 +17,18 @@ load_dotenv()
 
 llm = ChatOpenAI(
     base_url=os.getenv("SCW_GENERATIVE_APIs_ENDPOINT"),
-    api_key=os.getenv("SCW_SECRET_KEY_PERSO"), 
+    api_key=os.getenv("SCW_SECRET_KEY"), 
     model="llama-3.3-70b-instruct",
     # model="mistral-small-3.1-24b-instruct-2503",
     # model="gemma-3-27b-it",
     temperature=0.1
+)
+
+llm_code = ChatOpenAI(
+    base_url=os.getenv("SCW_GENERATIVE_APIs_ENDPOINT"),
+    api_key=os.getenv("SCW_SECRET_KEY"), 
+    model="qwen2.5-coder-32b-instruct",
+    temperature=0.5
 )
 
 # llm = ChatAnthropic(
@@ -72,20 +79,3 @@ def worker_code(state: State) -> Command[Literal["__end__"]]:
         goto=END,
     )
 
-
-
-def worker_HR(state: State) -> Command[Literal["__end__"]]:
-    result = llm_agent_no_tool.invoke(state)
-    return Command(
-        update={"messages": [AIMessage(content=result["messages"][-1].content)]},
-        goto=END,
-    )
-
-
-
-def worker_product(state: State) -> Command[Literal["__end__"]]:
-    result = llm_agent_no_tool.invoke(state)
-    return Command(
-        update={"messages": [AIMessage(content=result["messages"][-1].content)]},
-        goto=END,
-    )

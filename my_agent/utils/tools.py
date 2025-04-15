@@ -1,33 +1,30 @@
 import json
 from langchain_core.messages import ToolMessage
-from langchain_community.tools.tavily_search import TavilySearchResults
 from my_agent.utils.calendar_tools import  get_calendar_tool, create_calendar_tool
 
-tool = TavilySearchResults(max_results=2)
+# class BasicToolNode:
+#     """A node that runs the tools requested in the last AIMessage."""
 
-class BasicToolNode:
-    """A node that runs the tools requested in the last AIMessage."""
+#     def __init__(self, tools: list) -> None:
+#         self.tools_by_name = {tool.name: tool for tool in tools}
 
-    def __init__(self, tools: list) -> None:
-        self.tools_by_name = {tool.name: tool for tool in tools}
+#     def __call__(self, inputs: dict):
+#         if messages := inputs.get("messages", []):
+#             message = messages[-1]
+#         else:
+#             raise ValueError("No message found in input")
+#         outputs = []
+#         for tool_call in message.tool_calls:
+#             tool_result = self.tools_by_name[tool_call["name"]].invoke(
+#                 tool_call["args"]
+#             )
+#             outputs.append(
+#                 ToolMessage(
+#                     content=json.dumps(tool_result),
+#                     name=tool_call["name"],
+#                     tool_call_id=tool_call["id"],
+#                 )
+#             )
+#         return {"messages": outputs}
 
-    def __call__(self, inputs: dict):
-        if messages := inputs.get("messages", []):
-            message = messages[-1]
-        else:
-            raise ValueError("No message found in input")
-        outputs = []
-        for tool_call in message.tool_calls:
-            tool_result = self.tools_by_name[tool_call["name"]].invoke(
-                tool_call["args"]
-            )
-            outputs.append(
-                ToolMessage(
-                    content=json.dumps(tool_result),
-                    name=tool_call["name"],
-                    tool_call_id=tool_call["id"],
-                )
-            )
-        return {"messages": outputs}
-
-tools = [tool, get_calendar_tool, create_calendar_tool]
+tools = [get_calendar_tool, create_calendar_tool]
