@@ -18,8 +18,8 @@ load_dotenv()
 llm = ChatOpenAI(
     base_url=os.getenv("SCW_GENERATIVE_APIs_ENDPOINT"),
     api_key=os.getenv("SCW_SECRET_KEY_PERSO"), 
-    # model="llama-3.3-70b-instruct",
-    model="mistral-small-3.1-24b-instruct-2503",
+    model="llama-3.3-70b-instruct",
+    # model="mistral-small-3.1-24b-instruct-2503",
     # model="gemma-3-27b-it",
     temperature=0.1
 )

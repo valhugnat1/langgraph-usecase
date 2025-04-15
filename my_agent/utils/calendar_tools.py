@@ -1,265 +1,233 @@
+import os
+import datetime
+import json
+from typing import List, Dict, Any, Optional
+
+# Google API Libraries
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-import os.path
-import json
-import datetime
-from typing import List, Dict, Any, Optional
+from googleapiclient.errors import HttpError
+
+# Langchain & Pydantic
 from langchain.tools import BaseTool
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, field_validator, ValidationError
 
+# --- Constants ---
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/calendar.events']
+TOKEN_FILE = 'token.json'
+CREDENTIALS_FILE = 'credentials.json'
 
-class BaseGoogleCalendar:
-    """Base class for Google Calendar operations with authentication."""
+# --- Base Class for Authentication ---
+
+class GoogleCalendarBase:
+    """Handles Google Calendar API authentication and service creation."""
     _creds: Optional[Credentials] = None
     _service: Optional[Any] = None
 
-    def __init__(self):
-        self._authenticate()
-
     def _authenticate(self):
-        try:
-            creds = None
-            if os.path.exists('token.json'):
-                creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-            
-            if not creds or not creds.valid:
-                if creds and creds.expired and creds.refresh_token:
+        """Authenticates with Google Calendar API using OAuth 2.0."""
+        creds = None
+        if os.path.exists(TOKEN_FILE):
+            try:
+                creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+            except Exception as e:
+                print(f"Error loading token file: {e}. Re-authenticating.")
+                creds = None # Force re-authentication
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                try:
                     creds.refresh(Request())
-                else:
-                    flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                except Exception as e:
+                    print(f"Error refreshing token: {e}. Re-authenticating.")
+                    creds = None # Force re-authentication flow
+            else:
+                try:
+                    flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
                     creds = flow.run_local_server(port=0)
-                with open('token.json', 'w') as token:
+                except FileNotFoundError:
+                    raise FileNotFoundError(f"Credentials file '{CREDENTIALS_FILE}' not found. Please ensure it's in the correct directory.")
+                except Exception as e:
+                    raise Exception(f"Error during authentication flow: {str(e)}")
+
+            # Save the credentials for the next run
+            try:
+                with open(TOKEN_FILE, 'w') as token:
                     token.write(creds.to_json())
-            
-            self._creds = creds
+            except Exception as e:
+                 print(f"Warning: Could not save token file: {e}")
+
+        self._creds = creds
+        try:
             self._service = build('calendar', 'v3', credentials=self._creds)
-            
-            # Verify service is properly initialized
-            if not self._service:
-                raise Exception("Failed to initialize Google Calendar service")
-                
         except Exception as e:
-            raise Exception(f"Failed to authenticate with Google Calendar: {str(e)}")
+            raise Exception(f"Failed to build Google Calendar service: {str(e)}")
 
     @property
-    def service(self):
-        """Get the Google Calendar service instance."""
+    def service(self) -> Any:
+        """Provides an authenticated Google Calendar service instance."""
+        if not self._service or (self._creds and not self._creds.valid):
+             # Re-authenticate if service is missing or credentials expired
+             # (refresh usually happens automatically if refresh token exists,
+             # but explicitly call _authenticate if needed)
+             self._authenticate()
         if not self._service:
-            self._authenticate()
+             raise Exception("Google Calendar service could not be initialized.")
         return self._service
 
-    # Remove the problematic _run method from the base class
-    # The _run method should only be in the Tool class
+# --- Tool for Getting Calendar Events ---
 
-class GoogleCalendarInput(BaseModel):
-    query: str = Field(default="", description="The query to search for calendar events")
-    days_back: int = Field(default=7, description="Number of days to look back for events")
+class GetCalendarEventsInput(BaseModel):
+    query: str = Field(default="", description="Optional query to filter events (currently not implemented in filtering logic)")
+    days_back: int = Field(default=7, ge=0, description="Number of days to look back for events from today.")
+    days_forward: int = Field(default=30, ge=0, description="Number of days to look forward for events from today.")
 
-class GetCalendarEventsTool(BaseTool, BaseGoogleCalendar):
+
+class GetCalendarEventsTool(BaseTool, GoogleCalendarBase):
     name: str = "get_calendar_events"
-    description: str = "Useful for checking your Google Calendar events and schedule"
-    args_schema: type[BaseModel] = GoogleCalendarInput
+    description: str = "Fetches events from the user's primary Google Calendar within a specified date range."
+    args_schema: type[BaseModel] = GetCalendarEventsInput
 
-    def _run(self, query: str = "", days_back: int = 7) -> Dict[str, Any]:
-        """Run the tool with the given query."""
+    def _run(self, query: str = "", days_back: int = 7, days_forward: int = 30) -> Dict[str, Any]:
+        """Fetches events from the primary Google Calendar."""
         try:
-            # Ensure we have an authenticated service
-            if not self._service:
-                self._authenticate()
-                
             now = datetime.datetime.utcnow()
-            time_min = (now - datetime.timedelta(days=days_back)).isoformat() + 'Z'
-            time_max = (now + datetime.timedelta(days=30)).isoformat() + 'Z'
-            
+            time_min_dt = now - datetime.timedelta(days=days_back)
+            time_max_dt = now + datetime.timedelta(days=days_forward)
+
+            # Use start of the day for time_min and end of the day for time_max for better inclusiveness
+            time_min = time_min_dt.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
+            time_max = time_max_dt.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat() + 'Z'
+
             events_result = self.service.events().list(
                 calendarId='primary',
                 timeMin=time_min,
                 timeMax=time_max,
-                maxResults=50,
+                maxResults=100, # Increased limit slightly
                 singleEvents=True,
                 orderBy='startTime'
             ).execute()
-            
+
             events = events_result.get('items', [])
-            
+
             if not events:
                 return {
                     'status': 'success',
-                    'message': f'No events found between {time_min} and {time_max}.',
-                    'time_range': {
-                        'start': time_min,
-                        'end': time_max
-                    }
+                    'message': 'No events found in the specified time range.',
+                    'time_range': {'start': time_min, 'end': time_max},
+                    'events': []
                 }
-            
+
             formatted_events = []
             for event in events:
                 start = event['start'].get('dateTime', event['start'].get('date'))
                 end = event['end'].get('dateTime', event['end'].get('date'))
                 formatted_events.append({
-                    'summary': event['summary'],
+                    'summary': event.get('summary', 'No Title'),
                     'start': start,
                     'end': end,
-                    'location': event.get('location', 'No location specified'),
-                    'description': event.get('description', 'No description available'),
-                    'organizer': event.get('organizer', {}).get('email', 'Unknown'),
-                    'attendees': [attendee.get('email') for attendee in event.get('attendees', [])]
+                    'location': event.get('location'),
+                    'description': event.get('description'),
+                    'id': event.get('id') # Include event ID
                 })
-            
+
+            # Note: The 'query' parameter is received but not used for filtering here.
+            # Implementing text-based filtering would require iterating through 'formatted_events'.
+
             return {
                 'status': 'success',
-                'message': f'Found {len(formatted_events)} events',
-                'time_range': {
-                    'start': time_min,
-                    'end': time_max
-                },
+                'message': f'Found {len(formatted_events)} events.',
+                'time_range': {'start': time_min, 'end': time_max},
                 'events': formatted_events
             }
-            
+
+        except HttpError as e:
+             error_content = json.loads(e.content.decode('utf-8'))
+             error_message = error_content.get('error', {}).get('message', str(e))
+             return {'status': 'error', 'message': f"Google API Error: {error_message}", 'error_type': type(e).__name__}
         except Exception as e:
-            return {
-                'status': 'error',
-                'message': str(e),
-                'error_type': type(e).__name__
-            }
-        
+             return {'status': 'error', 'message': str(e), 'error_type': type(e).__name__}
+
+# --- Tool for Creating Calendar Events ---
 
 class CreateCalendarEventInput(BaseModel):
-    summary: str = Field(
-        ..., # The '...' ellipsis correctly marks this as REQUIRED
-        description="The title or summary of the calendar event. This is a required field."
-    )
-    start_time: str = Field(
-        ..., # REQUIRED
-        description="The start date and time of the event in ISO 8601 format (e.g., '2025-04-15T10:00:00Z' or '2025-04-15T10:00:00+02:00'). Include the timezone offset or 'Z' for UTC. This is a required field."
-    )
-    end_time: str = Field(
-        ..., # REQUIRED
-        description="The end date and time of the event in ISO 8601 format (e.g., '2025-04-15T11:00:00Z' or '2025-04-15T11:00:00+02:00'). Include the timezone offset or 'Z' for UTC. This is a required field."
-    )
-    description: str = Field(
-        default="",
-        description="An optional detailed description for the event."
-    )
-    location: str = Field(
-        default="",
-        description="An optional location for the event (e.g., 'Conference Room 1' or 'Online')."
-    )
-    attendees: List[str] = Field(
-        default=[],
-        description="An optional list of email addresses for attendees to invite."
-    )
+    summary: str = Field(..., description="The title/summary of the event (Required).")
+    start_time: str = Field(..., description="Start datetime in ISO 8601 format (e.g., '2025-04-15T10:00:00Z' or '2025-04-15T10:00:00+02:00' ) (Required).")
+    end_time: str = Field(..., description="End datetime in ISO 8601 format (e.g., '2025-04-15T11:00:00Z' or '2025-04-15T11:00:00+02:00' ) (Required).")
+    description: str = Field(default="", description="Optional description for the event.")
+    location: str = Field(default="", description="Optional location for the event.")
 
-class CreateCalendarEventTool(BaseTool, BaseGoogleCalendar):
+    @field_validator('start_time', 'end_time')
+    def check_iso_format(cls, v):
+        """Basic validation for ISO 8601 format."""
+        try:
+            # Handle 'Z' for UTC explicitly for fromisoformat
+            datetime.datetime.fromisoformat(v.replace('Z', '+00:00'))
+        except ValueError:
+            raise ValueError("Datetime must be in valid ISO 8601 format (e.g., 'YYYY-MM-DDTHH:MM:SSZ' or 'YYYY-MM-DDTHH:MM:SS+HH:MM')")
+        return v
+
+
+class CreateCalendarEventTool(BaseTool, GoogleCalendarBase):
     name: str = "create_calendar_event"
     description: str = (
-        "Use this tool to create a new event in the user's Google Calendar. "
-        "You MUST provide 'summary', 'start_time', and 'end_time'. "
-        "'start_time' and 'end_time' must be in ISO 8601 format (e.g., '2025-04-15T10:00:00Z'). "
-        "Ask the user for any missing required information. "
-        "IMPORTANT: Format the arguments as a VALID JSON object like this: "
-        '{"summary": "Meeting with Team", "start_time": "2025-04-15T09:00:00+02:00", "end_time": "2025-04-15T10:00:00+02:00", "description": "Discuss project", "location": "Room 3", "attendees": ["email@example.com"]}'
+        "Creates a new event in the user's primary Google Calendar. "
+        "Requires 'summary', 'start_time', and 'end_time'. "
+        "Datetimes must be in ISO 8601 format like : 2025-04-14T10:30:00+02:00"
+        "Ask the user for any missing required information before calling the tool."
+        "IMPORTANT: Format the args with summary, start_time and end_time at least"
     )
     args_schema: type[BaseModel] = CreateCalendarEventInput
 
-    # Adjusted signature: no defaults for required fields defined in args_schema
     def _run(self,
              summary: str,
              start_time: str,
              end_time: str,
              description: str = "",
              location: str = "",
-             attendees: Optional[List[str]] = None # Use Optional for clarity
             ) -> Dict[str, Any]:
-        """Create a new calendar event based on provided details."""
+        """Creates a new event using the Google Calendar API."""
         try:
-            # Ensure service is ready (good practice, already in your code)
-            if not self.service:
-                 self._authenticate() # Or raise an error if authentication isn't expected here
 
-            # Prepare the event body for the Google API
-            # The schema ensures summary, start_time, end_time are present
             event_body = {
                 'summary': summary,
-                'description': description or "", # Handle potential empty string if default used
-                'start': {
-                    'dateTime': start_time,
-                    # Consider extracting timezone from input or using a default/user setting
-                    # For simplicity here, assuming input includes offset or is UTC ('Z')
-                    # 'timeZone': 'UTC', # You might need logic to determine the correct timezone
-                },
-                'end': {
-                    'dateTime': end_time,
-                    # 'timeZone': 'UTC',
-                },
-                'location': location or "",
+                'description': description,
+                'location': location,
+                'start': {'dateTime': start_time}, # Assumes timezone info is in the string
+                'end': {'dateTime': end_time},     # Assumes timezone info is in the string
             }
-
-            # Use the provided attendees list if it's not None or empty
-            if attendees:
-                event_body['attendees'] = [{'email': email} for email in attendees]
-
-            # --- Add simple validation for time format as a fallback ---
-            # (Although ideally, the LLM provides it correctly based on description)
-            try:
-                # Basic check - doesn't fully validate ISO 8601 but catches obvious errors
-                datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                datetime.datetime.fromisoformat(end_time.replace('Z', '+00:00'))
-            except ValueError as time_err:
-                 return {
-                    'status': 'error',
-                    'message': f"Invalid time format provided. Expected ISO 8601 format (e.g., 'YYYY-MM-DDTHH:MM:SSZ'). Error: {time_err}",
-                    'error_type': 'ValueError'
-                 }
-            # --- End validation ---
-
 
             created_event = self.service.events().insert(
                 calendarId='primary',
                 body=event_body,
                 sendUpdates='all' # Notify attendees
             ).execute()
-            print(f"--- Event created successfully: {created_event.get('id')} ---") # Debugging print
 
-
-            # Format the successful response
             return {
                 'status': 'success',
-                'message': 'Event created successfully',
+                'message': 'Event created successfully.',
                 'event': {
                     'id': created_event.get('id'),
                     'summary': created_event.get('summary'),
                     'start': created_event.get('start', {}).get('dateTime'),
                     'end': created_event.get('end', {}).get('dateTime'),
                     'location': created_event.get('location', ''),
-                    'description': created_event.get('description', ''),
-                    'attendees': [attendee.get('email') for attendee in created_event.get('attendees', [])],
-                    'htmlLink': created_event.get('htmlLink') # Link to view event
+                    'htmlLink': created_event.get('htmlLink')
                 }
             }
 
+        except ValidationError as e: # Catch Pydantic validation errors if framework doesn't
+             return {'status': 'error', 'message': f"Input validation error: {str(e)}", 'error_type': 'ValidationError'}
+        except HttpError as e:
+             error_content = json.loads(e.content.decode('utf-8'))
+             error_message = error_content.get('error', {}).get('message', str(e))
+             return {'status': 'error', 'message': f"Google API Error: {error_message}", 'error_type': type(e).__name__}
         except Exception as e:
-            # Catch API errors or other issues
-            error_message = str(e)
-            print(f"--- Error creating event: {error_message} ---") # Debugging print
+            return {'status': 'error', 'message': f"Failed to create event: {str(e)}", 'error_type': type(e).__name__}
 
-            # Check for specific Google API error details if possible
-            if hasattr(e, 'content'):
-                try:
-                    error_details = json.loads(e.content.decode('utf-8'))
-                    error_message = error_details.get('error', {}).get('message', error_message)
-                except:
-                    pass # Keep original error message if parsing fails
-
-            return {
-                'status': 'error',
-                'message': f"Failed to create event: {error_message}",
-                'error_type': type(e).__name__
-            }
-
-# Create instances of the tools
+# --- Instantiate Tools ---
+# These can now be used by your Langchain agent or application
 get_calendar_tool = GetCalendarEventsTool()
-create_calendar_tool = CreateCalendarEventTool() 
+create_calendar_tool = CreateCalendarEventTool()
