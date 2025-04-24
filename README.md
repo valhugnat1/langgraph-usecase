@@ -4,25 +4,41 @@ This project is a LangChain-based AI agent designed to route user questions inte
 
 ## 🚀 Getting Started
 
-To launch the agent in development mode, simply run:
+1.  **Set up Google Calendar Credentials:**
+    * Go to the [Google Cloud Console](https://console.cloud.google.com/).
+    * Create a project (or select an existing one).
+    * Enable the **Google Calendar API**.
+    * Configure the **OAuth Consent Screen**:
+        * Choose "External" user type (unless using Google Workspace).
+        * Add the required scopes: `.../auth/calendar.readonly` and `.../auth/calendar.events`.
+        * Add your Google account email as a **Test User** while the app is in "Testing" mode.
+    * Go to "Credentials", click "+ Create Credentials" -> "OAuth client ID".
+    * Select **"Desktop app"** as the application type.
+    * Click "Create" and **Download the JSON** credentials file.
+    * **Rename** the downloaded file to `credentials.json` and place it in the **root directory** of this project.
 
-```bash
-langchain dev
-```
+2.  **Launch the Agent:**
+    * Ensure you have any other necessary environment variables or API keys set up.
+    * Run the agent in development mode:
+        ```bash
+        langgraph dev
+        ```
 
-Make sure your environment is properly configured with any required API keys or credentials (e.g., for Google Calendar access).
+3.  **First Run Authentication:**
+    * When you first run the agent and it needs to access the calendar, it will open a browser window asking you to log in to your Google account and grant permission (based on the consent screen you configured).
+    * After you grant access, a `token.json` file will be created in the project root to store your authorization for future runs.
 
 ## 🧭 Architecture Overview
 
 The core of this agent is a **Router Chain**, which analyzes each incoming question and decides which of the two expert agents should respond:
 
-- **General Model**
-  - Focused on everyday tasks and productivity-related queries.
-  - Equipped with two tools:
-    - `get_calendar_events`: Fetches upcoming events.
-    - `create_calendar_event`: Adds new events to your calendar.
-- **Developer Model**
-  - Specialized in technical questions, programming help, and dev workflows.
+-   **General Model**
+    * Focused on everyday tasks and productivity-related queries.
+    * Equipped with two tools:
+        * `get_calendar_events`: Fetches upcoming events.
+        * `Calendar`: Adds new events to your calendar.
+-   **Developer Model**
+    * Specialized in technical questions, programming help, and dev workflows.
 
 This modular approach allows the system to deliver more accurate and context-aware responses based on the user’s intent.
 
@@ -37,3 +53,5 @@ This modular approach allows the system to deliver more accurate and context-awa
 
 These tools require valid OAuth credentials and appropriate permissions to access the user's Google Calendar.
 
+
+These tools require the `credentials.json` setup (as described in Getting Started) and user consent via the one-time browser authentication flow.

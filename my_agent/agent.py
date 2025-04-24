@@ -1,4 +1,4 @@
-from my_agent.utils.nodes import supervisor_node, worker_general, worker_code, worker_HR, worker_product
+from my_agent.utils.nodes import supervisor_node, worker_general, worker_code
 from my_agent.utils.state import State
 from langgraph.graph import StateGraph, START
 

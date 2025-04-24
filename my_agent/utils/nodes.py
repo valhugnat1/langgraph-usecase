@@ -20,7 +20,6 @@ llm = ChatOpenAI(
     api_key=os.getenv("SCW_SECRET_KEY"), 
     model="llama-3.3-70b-instruct",
     # model="mistral-small-3.1-24b-instruct-2503",
-    # model="gemma-3-27b-it",
     temperature=0.1
 )
 
@@ -63,7 +62,7 @@ def supervisor_node(state: State) -> Command[Literal[*CHAT_OPTIONS]]:
 
 
 
-def worker_general(state: State) -> Command[Literal["__end__"]]:
+def worker_general(state: State) -> Command[Literal[ "__end__"]]:
     result = llm_agent_tools.invoke(state)
     return Command(
         update={"messages": [AIMessage(content=result["messages"][-1].content)]},
