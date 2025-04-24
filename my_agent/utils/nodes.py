@@ -1,7 +1,7 @@
 from typing import Literal, TypedDict
 from langgraph.graph import  END
 from langgraph.types import Command
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 from my_agent.utils.prompts import CHAT_OPTIONS, SYSTEM_PROMPT
 from my_agent.utils.state import State
@@ -11,9 +11,9 @@ from langchain_openai import ChatOpenAI
 # from langchain_mistralai.chat_models import ChatMistralAI
 import os
 from my_agent.utils.tools import tools
+from datetime import datetime  # Import datetime module
 
 load_dotenv()
-
 
 llm = ChatOpenAI(
     base_url=os.getenv("SCW_GENERATIVE_APIs_ENDPOINT"),
@@ -63,7 +63,18 @@ def supervisor_node(state: State) -> Command[Literal[*CHAT_OPTIONS]]:
 
 
 def worker_general(state: State) -> Command[Literal[ "__end__"]]:
-    result = llm_agent_tools.invoke(state)
+    current_date = datetime.now().strftime("%Y-%m-%d")
+
+    system_prompt = SystemMessage(content=f"Today's date is {current_date}.")
+    messages = [system_prompt] + state["messages"]
+    updated_state = {
+        **state,
+        "messages": messages,
+    }
+
+    print(updated_state)
+
+    result = llm_agent_tools.invoke(updated_state)
     return Command(
         update={"messages": [AIMessage(content=result["messages"][-1].content)]},
         goto=END,
